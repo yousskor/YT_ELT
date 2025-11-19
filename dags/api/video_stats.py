@@ -5,11 +5,16 @@ from datetime import date
 import os
 from dotenv import load_dotenv 
 
-load_dotenv(dotenv_path="./env")
-
-CHANNEL_HANDLE = 'MrBeast'
-API_KEY = 'AIzaSyCfnnxDK5LGVepA4fbSDqKgwsCWIL7_ndA'
 maxResults = 50
+#load_dotenv(dotenv_path="./env")
+
+from airflow.models import    Variable
+
+CHANNEL_HANDLE = Variable.get('CHANNEL_HANDLE')
+API_KEY = Variable.get("API_KEY")
+
+
+
 
 def get_paylist_id():
         
@@ -36,7 +41,7 @@ def get_paylist_id():
         except requests.exceptions.RequestException as e:
               raise e
         
-        
+    
 def get_video_ids(playlistID):
       
       video_ids = []
@@ -129,7 +134,7 @@ def extract_video_data(video_ids):
       
       except requests.exceptions.RequestException as e:
             raise e
-      
+    
 def save_to_json(extracted_data):
      file_path = f"./data/YT_data_{date.today()}.json"
 
