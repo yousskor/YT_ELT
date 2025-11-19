@@ -45,9 +45,8 @@
 # Feel free to modify this file to suit your needs.
 ---
 x-airflow-common: &airflow-common
-  # Use custom image that builds on top of default airflow image (currently; Default: apache/airflow:2.9.2)
-  # Image stored on Dockerhub
-  image: ${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPOSITORY}:${IMAGE_TAG}
+  image: airflow-yt-elt:2.9.2
+  build: .
   # Use the .env file to read the connection params and variables - SWITCH THIS OFF WHEN USING GITHUB ACTIONS
   env_file:
     - .env
@@ -115,6 +114,7 @@ services:
     environment:
       - POSTGRES_USER=${POSTGRES_CONN_USERNAME}
       - POSTGRES_PASSWORD=${POSTGRES_CONN_PASSWORD}
+      #- PIP_ADDITIONAL_REQUIREMENTS: "soda-core-postgres pytest"
       # - METADATA_DATABASE_NAME=${METADATA_DATABASE_NAME}
       # - METADATA_DATABASE_USERNAME=${METADATA_DATABASE_USERNAME}
       # - METADATA_DATABASE_PASSWORD=${METADATA_DATABASE_PASSWORD}

@@ -1,0 +1,22 @@
+checks for yt_api:
+  # 1) Complétude de l'identifiant vidéo
+  - missing_count("Video_ID") = 0
+
+  # 2) Unicité de l'identifiant vidéo
+  - duplicate_count("Video_ID") = 0
+
+  # 3) Les likes ne doivent jamais dépasser les vues
+  - likes_count_greater_than_vid_views = 0:
+      name: Check for Likes_Count greater than Video_views
+      likes_count_greater_than_vid_views query: |
+        SELECT COUNT(*) AS likes_count_greater_than_vid_views
+        FROM yt_api
+        WHERE "Likes_Count" > "Video_views"
+
+  # 4) Les commentaires ne doivent jamais dépasser les vues
+  - comments_count_greater_than_vid_views = 0:
+      name: Check for Comments_Count greater than Video_views
+      comments_count_greater_than_vid_views query: |
+        SELECT COUNT(*) AS comments_count_greater_than_vid_views
+        FROM yt_api
+        WHERE "Comments_Count" > "Video_views"
