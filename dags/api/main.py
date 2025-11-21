@@ -1,5 +1,6 @@
 from airflow import DAG
 from airflow.decorators import task
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from datetime import datetime, timedelta
 import pendulum
 
@@ -7,14 +8,16 @@ from datawarehouse.dwh import staging_table, core_table
 from dataquality.soda import yt_elt_data_quality
 
 from api.video_stats import (
-    get_paylist_id as _get_playlist_id,  # <-- corriger ici si besoin
+    get_paylist_id as _get_playlist_id,
     get_video_ids as _get_video_ids,
     extract_video_data as _extract_video_data,
     save_to_json as _save_to_json,
 )
 
+# -------- TIMEZONE --------
 local_tz = pendulum.timezone("Africa/Abidjan")
 
+# -------- DEFAULT ARGS --------
 default_args = {
     "owner": "airflow",
     "depends_on_past": False,
@@ -26,15 +29,17 @@ default_args = {
     "start_date": datetime(2024, 1, 1, tzinfo=local_tz),
 }
 
-# variables
+# -------- VARIABLES --------
 staging_schema = "staging"
 core_schema = "core"
 
-# -------- Tasks Airflow (TaskFlow API) --------
+
+# -----------------------------------------------------
+#                     TASKFLOW TASKS
+# -----------------------------------------------------
 
 @task
 def get_playlist():
-    # Retourne un STRING (playlist_id), sérialisable en JSON
     return _get_playlist_id()
 
 @task
@@ -50,7 +55,10 @@ def save(data: list[dict]):
     _save_to_json(data)
 
 
-# -------- DAG 1 : produire le JSON --------
+# -----------------------------------------------------
+#                     DAG 1 : PRODUCE JSON
+# -----------------------------------------------------
+
 with DAG(
     dag_id="produce_json",
     default_args=default_args,
@@ -64,37 +72,58 @@ with DAG(
     extracted = extract(video_ids)
     save_task = save(extracted)
 
-    # (optionnel, TaskFlow gère déjà les dépendances via les appels)
     playlist_id >> video_ids >> extracted >> save_task
 
+    # 👉 Trigger update_db when produce_json is finished
+    trigger_update_db = TriggerDagRunOperator(
+        task_id="trigger_update_db",
+        trigger_dag_id="update_db",
+        wait_for_completion=False,
+    )
 
-# -------- DAG 2 : update DB --------
+    save_task >> trigger_update_db
+
+
+# -----------------------------------------------------
+#                     DAG 2 : UPDATE DB
+# -----------------------------------------------------
+
 with DAG(
     dag_id="update_db",
     default_args=default_args,
-    description="Dag to process Json file and insert data into both staging and core schema",
+    description="Dag to process JSON file and insert data into staging and core",
     schedule="0 15 * * *",
     catchup=False,
 ) as update_db_dag:
-    
+
     update_staging = staging_table()
     update_core = core_table()
 
-    # (optionnel, TaskFlow gère déjà les dépendances via les appels)
     update_staging >> update_core
 
+    # 👉 Trigger data_quality when update_db is finished
+    trigger_data_quality = TriggerDagRunOperator(
+        task_id="trigger_data_quality",
+        trigger_dag_id="data_quality",
+        wait_for_completion=False,
+    )
 
-# -------- DAG 3 : data quality --------
+    update_core >> trigger_data_quality
+
+
+# -----------------------------------------------------
+#                     DAG 3 : DATA QUALITY
+# -----------------------------------------------------
+
 with DAG(
     dag_id="data_quality",
     default_args=default_args,
-    description="Dag to check the data quality on both layer in db",
+    description="Dag to run Soda data-quality checks on staging & core",
     schedule="0 16 * * *",
     catchup=False,
 ) as data_quality_dag:
-     
+
     soda_validate_staging = yt_elt_data_quality(staging_schema)
     soda_validate_core = yt_elt_data_quality(core_schema)
-    
-    # (optionnel, TaskFlow gère déjà les dépendances via les appels)
+
     soda_validate_staging >> soda_validate_core
