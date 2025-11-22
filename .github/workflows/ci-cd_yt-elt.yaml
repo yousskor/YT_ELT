@@ -1,0 +1,105 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) Récupérer le code du repo
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2) Vérifier si Dockerfile ou requirements.txt ont changé
+      - name: Get changed files
+        id: changed-files-build
+        uses: tj-actions/changed-files@v45
+        with:
+          files: |
+            Dockerfile
+            requirements.txt
+
+      # 3) Setup Docker Buildx (permet de builder des images de manière avancée)
+      - name: Set up Docker buildx
+        if: steps.changed-files-build.outputs.any_changed == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # 4) Build l'image Docker (mais on ne la pousse nulle part)
+      - name: Build Docker image
+        if: steps.changed-files-build.outputs.any_changed == 'true'
+        run: |
+          docker build -t airflow-yt-elt:2.9.2 .
+
+  unit-and-integration-and-e2e-tests:
+    runs-on: ubuntu-latest
+    needs: build-image   # CORRECTION : le job s'appelle build-image, pas build-and-push-image
+    env:
+      AIRFLOW_WWW_USER_PASSWORD:  ${{ secrets.AIRFLOW_WWW_USER_PASSWORD }}   # CORRECTION : nom du secret
+      AIRFLOW_WWW_USER_USERNAME:  ${{ secrets.AIRFLOW_WWW_USER_USERNAME }}   # CORRECTION : nom du secret
+      API_KEY:                    ${{ secrets.API_KEY }}
+      CELERY_BACKEND_NAME:        ${{ secrets.CELERY_BACKEND_NAME }}
+      CELERY_BACKEND_PASSWORD:    ${{ secrets.CELERY_BACKEND_PASSWORD }}     # CORRECTION : enlever l’espace
+      CELERY_BACKEND_USERNAME:    ${{ secrets.CELERY_BACKEND_USERNAME }}
+      ELT_DATABASE_PASSWORD:      ${{ secrets.ELT_DATABASE_PASSWORD }}
+      ELT_DATABASE_USERNAME:      ${{ secrets.ELT_DATABASE_USERNAME }}
+      FERNET_KEY:                 ${{ secrets.FERNET_KEY }}
+      METADATA_DATABASE_NAME:     ${{ secrets.METADATA_DATABASE_NAME }}
+      METADATA_DATABASE_PASSWORD: ${{ secrets.METADATA_DATABASE_PASSWORD }}
+      METADATA_DATABASE_USERNAME: ${{ secrets.METADATA_DATABASE_USERNAME }}
+      POSTGRES_CONN_USERNAME:     ${{ secrets.POSTGRES_CONN_USERNAME }}
+      POSTGRES_CONN_PASSWORD:     ${{ secrets.POSTGRES_CONN_PASSWORD }}
+      POSTGRES_CONN_HOST:         ${{ secrets.POSTGRES_CONN_HOST }}
+      POSTGRES_CONN_PORT:         ${{ secrets.POSTGRES_CONN_PORT }}
+      AIRFLOW_UID:                ${{ vars.AIRFLOW_UID }}
+      CHANNEL_HANDLE:             ${{ vars.CHANNEL_HANDLE }}
+      DOCKERHUB_NAMESPACE:        ${{ vars.DOCKERHUB_NAMESPACE }}
+      DOCKERHUB_REPOSITORY:       ${{ vars.DOCKERHUB_REPOSITORY }}
+      DOCKERHUB_USERNAME:         ${{ vars.DOCKERHUB_USERNAME }}
+
+    steps:
+      # 1) Récupérer le code du repo
+      - name: Checkout code
+        uses: actions/checkout@v4 
+
+      # 2) Fichiers qui déclenchent les tests (DAGs, include, docker-compose)
+      - name: Get changed files for tests
+        id: changed-files-tests        # CORRECTION : id différent pour ce 2e changed-files
+        uses: tj-actions/changed-files@v45
+        with:
+          files: |
+            dags/**
+            include/**
+            docker-compose.yml          # CORRECTION : nom + extension
+
+      # 3) Lancer la stack Docker Compose
+      - name: Set up Docker Compose stack
+        if: steps.changed-files-tests.outputs.any_changed == 'true'
+        run: docker compose up -d
+
+      # 4) Lancer les tests unitaires et d’intégration
+      - name: Run unit and integration tests
+        if: steps.changed-files-tests.outputs.any_changed == 'true'
+        run: docker exec -t airflow-worker sh -c 'pytest tests/ -v'
+
+      # 5) Lancer les tests End-to-End sur les DAGs
+      - name: Run End to End DAG Tests
+        if: steps.changed-files-tests.outputs.any_changed == 'true'
+        run: |
+          DAG_NAMES=('produce_json' 'update_db' 'data_quality')   # CORRECTION : virgules retirées
+          for DAG in "${DAG_NAMES[@]}"; do                        # CORRECTION : guillemets + ${...}
+            docker exec -t airflow-worker sh -c "airflow dags test $DAG 2025-01-01"
+          done
+
+      # 6) Stopper et nettoyer la stack Docker Compose
+      - name: Teardown Docker Compose
+        if: steps.changed-files-tests.outputs.any_changed == 'true'
+        run: docker compose down
